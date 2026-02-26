@@ -28,6 +28,12 @@ except ImportError:
     adapters = None
     Application = None
 
+try:
+    from common.djangoapps.student.models import UserProfile, Registration
+except ImportError:
+    UserProfile = None
+    Registration = None
+
 logger = logging.getLogger(__name__)
 
 User = get_user_model()
@@ -162,15 +168,38 @@ class LlaveMxMobileLogin(APIView):
                     "username": self._unique_username(username),
                     "first_name": user_data.get("nombre", ""),
                     "last_name": f"{user_data.get('primerApellido', '')} {user_data.get('segundoApellido', '')}".strip(),
+                    "is_active": True,
                 }
             )
 
             if created:
                 user.set_unusable_password()
                 user.save()
+                # Crear UserProfile y Registration (requeridos por Open edX)
+                if UserProfile is not None:
+                    UserProfile.objects.get_or_create(
+                        user=user,
+                        defaults={"name": f"{user_data.get('nombre', '')} {user_data.get('primerApellido', '')}".strip()}
+                    )
+                if Registration is not None:
+                    reg, _ = Registration.objects.get_or_create(user=user)
+                    if not reg.is_active:
+                        reg.activate()
                 logger.info(f"[LlaveMX Mobile] Usuario creado: {user.username} ({email})")
             else:
-                logger.info(f"[LlaveMX Mobile] Usuario existente: {user.username} ({email})")
+                # Asegurar que la cuenta esté activa (autenticado por LlaveMX = verificado)
+                if not user.is_active:
+                    user.is_active = True
+                    user.save(update_fields=["is_active"])
+                    logger.info(f"[LlaveMX Mobile] Usuario reactivado: {user.username} ({email})")
+                else:
+                    logger.info(f"[LlaveMX Mobile] Usuario existente: {user.username} ({email})")
+                # Asegurar que exista UserProfile
+                if UserProfile is not None:
+                    UserProfile.objects.get_or_create(
+                        user=user,
+                        defaults={"name": f"{user.first_name} {user.last_name}".strip()}
+                    )
 
             # 4️⃣ Emitir token Open edX
             if create_dot_access_token is None or Application is None:
