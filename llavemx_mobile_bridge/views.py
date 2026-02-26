@@ -2,6 +2,7 @@
 Views for LlaveMX Mobile Bridge plugin.
 """
 import logging
+from urllib.parse import urlencode
 
 import requests
 from rest_framework.views import APIView
@@ -10,6 +11,8 @@ from rest_framework import status
 from rest_framework.parsers import JSONParser, FormParser
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.http import HttpResponse
+from django.views import View
 
 try:
     from openedx.core.djangoapps.oauth_dispatch.api import create_dot_access_token
@@ -221,3 +224,181 @@ class LlaveMxMobileLogin(APIView):
             username = f"{base_username}_{counter}"
             counter += 1
         return username
+
+
+# Deep link scheme configurado en la app Android
+ANDROID_DEEP_LINK_SCHEME = getattr(
+    settings,
+    "LLAVEMX_ANDROID_DEEP_LINK_SCHEME",
+    "mx.aprende.android"
+)
+
+
+class LlaveMxMobileCallback(View):
+    """
+    Endpoint que recibe el callback de LlaveMX y redirige a la app móvil.
+    
+    LlaveMX redirige aquí después de la autenticación:
+        GET /mobile/callback?code=XXX&state=YYY
+    
+    Esta vista genera una página que abre la app Android usando deep link:
+        mx.aprende.android://oauth/callback?code=XXX&state=YYY
+    """
+    
+    def get(self, request):
+        """
+        Procesa el callback de LlaveMX y redirige a la app móvil.
+        """
+        code = request.GET.get("code")
+        state = request.GET.get("state")
+        error = request.GET.get("error")
+        error_description = request.GET.get("error_description", "")
+        
+        logger.info(f"[LlaveMX Callback] Received - code: {bool(code)}, state: {bool(state)}, error: {error}")
+        
+        # Construir deep link para la app Android
+        if error:
+            # Error de LlaveMX
+            params = urlencode({"error": error, "error_description": error_description})
+            deep_link = f"{ANDROID_DEEP_LINK_SCHEME}://oauth/callback?{params}"
+            title = "Error de autenticación"
+            message = error_description or error
+            button_text = "Volver a la app"
+        elif code:
+            # Éxito - pasar code y state a la app
+            params = urlencode({"code": code, "state": state or ""})
+            deep_link = f"{ANDROID_DEEP_LINK_SCHEME}://oauth/callback?{params}"
+            title = "Autenticación exitosa"
+            message = "Redirigiendo a la aplicación..."
+            button_text = "Abrir app"
+        else:
+            # Sin code ni error
+            deep_link = f"{ANDROID_DEEP_LINK_SCHEME}://oauth/callback?error=no_code"
+            title = "Error"
+            message = "No se recibió código de autorización"
+            button_text = "Volver a la app"
+        
+        # HTML que intenta abrir la app automáticamente
+        html = f"""
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title} - MéxicoX</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #611232 0%, #8B1538 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+        .container {{
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }}
+        .logo {{
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 24px;
+            background: #611232;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }}
+        .logo svg {{
+            width: 40px;
+            height: 40px;
+            fill: white;
+        }}
+        h1 {{
+            color: #333;
+            font-size: 24px;
+            margin-bottom: 12px;
+        }}
+        p {{
+            color: #666;
+            font-size: 16px;
+            margin-bottom: 24px;
+            line-height: 1.5;
+        }}
+        .spinner {{
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #611232;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 24px;
+        }}
+        @keyframes spin {{
+            0% {{ transform: rotate(0deg); }}
+            100% {{ transform: rotate(360deg); }}
+        }}
+        .btn {{
+            display: inline-block;
+            background: #611232;
+            color: white;
+            padding: 14px 32px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-size: 16px;
+            font-weight: 600;
+            transition: background 0.3s;
+        }}
+        .btn:hover {{
+            background: #8B1538;
+        }}
+        .note {{
+            margin-top: 20px;
+            font-size: 14px;
+            color: #999;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+            </svg>
+        </div>
+        <h1>{title}</h1>
+        <p>{message}</p>
+        <div class="spinner" id="spinner"></div>
+        <a href="{deep_link}" class="btn" id="openApp">{button_text}</a>
+        <p class="note">Si la app no se abre automáticamente, presiona el botón.</p>
+    </div>
+    
+    <script>
+        // Intentar abrir la app automáticamente
+        (function() {{
+            var deepLink = "{deep_link}";
+            
+            // Intentar abrir inmediatamente
+            window.location.href = deepLink;
+            
+            // Ocultar spinner después de un momento
+            setTimeout(function() {{
+                document.getElementById('spinner').style.display = 'none';
+            }}, 2000);
+        }})();
+    </script>
+</body>
+</html>
+"""
+        return HttpResponse(html, content_type="text/html")
