@@ -12,7 +12,9 @@ from rest_framework.parsers import JSONParser, FormParser
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.http import HttpResponse
+from django.utils.decorators import method_decorator
 from django.views import View
+from django.views.decorators.csrf import csrf_exempt
 
 try:
     from openedx.core.djangoapps.oauth_dispatch.api import create_dot_access_token
@@ -44,6 +46,7 @@ LLAVEMX_MOBILE_CLIENT_ID = getattr(
 )
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class LlaveMxMobileLogin(APIView):
     """
     Endpoint para autenticación móvil con LlaveMX usando PKCE.
