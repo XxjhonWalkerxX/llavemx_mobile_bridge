@@ -18,10 +18,14 @@ from django.views.decorators.csrf import csrf_exempt
 
 try:
     from openedx.core.djangoapps.oauth_dispatch.api import create_dot_access_token
+    from openedx.core.djangoapps.oauth_dispatch.jwt import create_jwt_token_dict
+    from openedx.core.djangoapps.oauth_dispatch import adapters
     from oauth2_provider.models import Application
 except ImportError:
     # Para desarrollo local sin Open edX
     create_dot_access_token = None
+    create_jwt_token_dict = None
+    adapters = None
     Application = None
 
 logger = logging.getLogger(__name__)
@@ -185,15 +189,24 @@ class LlaveMxMobileLogin(APIView):
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
 
-            edx_token = create_dot_access_token(
+            # Paso 1: Crear token opaco DOT (base para el JWT)
+            dot_token_dict = create_dot_access_token(
                 request=request,
                 user=user,
                 client=client,
                 scopes="profile email"
             )
 
+            # Paso 2: Convertir a JWT (la app móvil envía "Authorization: JWT <token>")
+            oauth_adapter = adapters.DOTAdapter()
+            jwt_token_dict = create_jwt_token_dict(
+                dot_token_dict,
+                oauth_adapter,
+                use_asymmetric_key=True,
+            )
+
             logger.info(f"[LlaveMX Mobile] Login successful for {email}")
-            return Response(edx_token)
+            return Response(jwt_token_dict)
 
         except requests.exceptions.Timeout:
             logger.error("[LlaveMX Mobile] Timeout connecting to LlaveMX")
