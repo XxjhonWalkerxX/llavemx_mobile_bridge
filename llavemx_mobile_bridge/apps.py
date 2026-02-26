@@ -7,12 +7,12 @@ para que no se muera el LMS al cargar.
 from django.apps import AppConfig
 
 try:
-    from edx_django_utils.plugins.constants import ProjectType
+    from openedx.core.djangoapps.plugins.constants import ProjectType
 except ImportError:
     # Fallback para desarrollo local sin Open edX
     class ProjectType:
-        LMS = "lms"
-        CMS = "cms"
+        LMS = "lms.djangoapp"
+        CMS = "cms.djangoapp"
 
 
 class LlaveMxMobileBridgeConfig(AppConfig):
