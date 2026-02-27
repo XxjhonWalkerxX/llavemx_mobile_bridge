@@ -34,6 +34,18 @@ except ImportError:
     UserProfile = None
     Registration = None
 
+try:
+    from custom_reg_form.models import ExtraInfo
+except Exception:
+    ExtraInfo = None
+
+try:
+    from users.models import LlaveMXBlockedLogin
+except Exception:
+    LlaveMXBlockedLogin = None
+
+GENERIC_CURP = "XEXX010101HDFXXX04"
+
 logger = logging.getLogger(__name__)
 
 User = get_user_model()
@@ -151,8 +163,9 @@ class LlaveMxMobileLogin(APIView):
             logger.info(f"[LlaveMX Mobile] User data keys: {user_data.keys()}")
 
             email = user_data.get("correo")
-            curp = user_data.get("curp")
-            username = curp or user_data.get("login") or email.split("@")[0] if email else None
+            curp = (user_data.get("curp") or "").strip()
+            uid = user_data.get("idUsuario")
+            username = curp or user_data.get("login") or (email.split("@")[0] if email else None)
 
             if not email:
                 logger.error(f"[LlaveMX Mobile] No email in user data: {user_data}")
@@ -161,20 +174,87 @@ class LlaveMxMobileLogin(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # 3️⃣ Crear o obtener usuario
-            user, created = User.objects.get_or_create(
-                email=email,
-                defaults={
-                    "username": self._unique_username(username),
-                    "first_name": user_data.get("nombre", ""),
-                    "last_name": f"{user_data.get('primerApellido', '')} {user_data.get('segundoApellido', '')}".strip(),
-                    "is_active": True,
-                }
-            )
+            # 3️⃣ Buscar usuario existente (primero por CURP, luego por email)
+            user = None
+            created = False
 
-            if created:
+            # 3a) Asociación por CURP (alineado con pipeline web)
+            if curp and curp.upper() != GENERIC_CURP and ExtraInfo is not None:
+                matches = (
+                    ExtraInfo.objects
+                    .filter(curp__iexact=curp)
+                    .select_related("user")
+                )
+                if matches.exists():
+                    users_by_curp = [ei.user for ei in matches if ei.user]
+                    active_users = [u for u in users_by_curp if u.is_active]
+
+                    # BLOQUEO: múltiples cuentas activas con mismo CURP
+                    if len(active_users) > 1:
+                        logger.error(
+                            "[LlaveMX Mobile][BLOCKED] CURP duplicado con múltiples cuentas activas. "
+                            "curp=%s users=%s",
+                            curp,
+                            [u.id for u in active_users],
+                        )
+                        if LlaveMXBlockedLogin and uid:
+                            try:
+                                LlaveMXBlockedLogin.objects.update_or_create(
+                                    uid=str(uid),
+                                    defaults={
+                                        "curp": curp,
+                                        "email": email,
+                                        "resolved": False,
+                                        "resolved_at": None,
+                                        "resolved_by": None,
+                                        "selected_user": None,
+                                    },
+                                )
+                            except Exception:
+                                logger.exception("[LlaveMX Mobile] Error guardando LlaveMXBlockedLogin")
+                        return Response(
+                            {"error": "CURP_DUPLICADO_CONTACTE_SOPORTE"},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
+
+                    # Una cuenta activa → asociar
+                    if len(active_users) == 1:
+                        user = active_users[0]
+                        logger.info(
+                            "[LlaveMX Mobile] Asociación por CURP exitosa user_id=%s curp=%s",
+                            user.id, curp,
+                        )
+
+                    # Una sola cuenta (inactiva)
+                    elif len(users_by_curp) == 1:
+                        user = users_by_curp[0]
+                        logger.info(
+                            "[LlaveMX Mobile] Asociación por CURP con cuenta inactiva user_id=%s",
+                            user.id,
+                        )
+                elif curp.upper() == GENERIC_CURP:
+                    logger.warning("[LlaveMX Mobile] CURP genérico detectado, no se asocia por CURP.")
+
+            # 3b) Fallback: buscar por email
+            if user is None:
+                try:
+                    user = User.objects.get(email=email)
+                    logger.info(f"[LlaveMX Mobile] Usuario encontrado por email: {user.username} ({email})")
+                except User.DoesNotExist:
+                    pass
+
+            # 3c) Crear usuario nuevo si no se encontró
+            if user is None:
+                user = User(
+                    username=self._unique_username(username),
+                    email=email,
+                    first_name=user_data.get("nombre", ""),
+                    last_name=f"{user_data.get('primerApellido', '')} {user_data.get('segundoApellido', '')}".strip(),
+                    is_active=True,
+                )
                 user.set_unusable_password()
                 user.save()
+                created = True
                 # Crear UserProfile y Registration (requeridos por Open edX)
                 if UserProfile is not None:
                     UserProfile.objects.get_or_create(
@@ -199,6 +279,17 @@ class LlaveMxMobileLogin(APIView):
                         user=user,
                         defaults={"name": f"{user.first_name} {user.last_name}".strip()}
                     )
+
+            # 3d) Guardar/actualizar CURP en ExtraInfo
+            if curp and curp.upper() != GENERIC_CURP and ExtraInfo is not None:
+                ei, ei_created = ExtraInfo.objects.get_or_create(
+                    user=user,
+                    defaults={"curp": curp}
+                )
+                if not ei_created and (not ei.curp or ei.curp.upper() == GENERIC_CURP):
+                    ei.curp = curp
+                    ei.save(update_fields=["curp"])
+                    logger.info(f"[LlaveMX Mobile] CURP actualizado en ExtraInfo para user_id={user.id}")
 
             # 4️⃣ Emitir token Open edX
             if create_dot_access_token is None or Application is None:
