@@ -183,8 +183,7 @@ class LlaveMxMobileLogin(APIView):
                     )
                 if Registration is not None:
                     reg, _ = Registration.objects.get_or_create(user=user)
-                    if not reg.is_active:
-                        reg.activate()
+                    reg.activate()
                 logger.info(f"[LlaveMX Mobile] Usuario creado: {user.username} ({email})")
             else:
                 # Asegurar que la cuenta esté activa (autenticado por LlaveMX = verificado)
