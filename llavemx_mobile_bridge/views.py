@@ -1,6 +1,7 @@
 """
 Views for LlaveMX Mobile Bridge plugin.
 """
+import json
 import logging
 from urllib.parse import urlencode
 
@@ -13,6 +14,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.http import HttpResponse
 from django.utils.decorators import method_decorator
+from django.utils.translation import get_language
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
@@ -30,9 +32,33 @@ except ImportError:
 
 try:
     from common.djangoapps.student.models import UserProfile, Registration
+    from common.djangoapps.student.models import create_comments_service_user
 except ImportError:
     UserProfile = None
     Registration = None
+    create_comments_service_user = None
+
+try:
+    from social_django.models import UserSocialAuth
+except ImportError:
+    UserSocialAuth = None
+
+try:
+    from openedx.core.djangoapps.user_api import preferences as preferences_api
+    LANGUAGE_KEY = "pref-lang"
+except ImportError:
+    preferences_api = None
+    LANGUAGE_KEY = None
+
+try:
+    from common.djangoapps.student.models import UserAttribute
+except ImportError:
+    UserAttribute = None
+
+try:
+    from openedx.core.djangoapps.site_configuration import helpers as configuration_helpers
+except ImportError:
+    configuration_helpers = None
 
 try:
     from custom_reg_form.models import ExtraInfo
@@ -165,6 +191,13 @@ class LlaveMxMobileLogin(APIView):
             email = user_data.get("correo")
             curp = (user_data.get("curp") or "").strip()
             uid = user_data.get("idUsuario")
+            es_extranjero = bool(user_data.get("esExtranjero", False))
+
+            # Extranjeros sin CURP → asignar CURP genérico (alineado con web)
+            if es_extranjero and not curp:
+                curp = GENERIC_CURP
+                logger.info("[LlaveMX Mobile] Usuario extranjero sin CURP, asignando genérico.")
+
             username = curp or user_data.get("login") or (email.split("@")[0] if email else None)
 
             if not email:
@@ -255,15 +288,45 @@ class LlaveMxMobileLogin(APIView):
                 user.set_unusable_password()
                 user.save()
                 created = True
-                # Crear UserProfile y Registration (requeridos por Open edX)
+
+                full_name = f"{user_data.get('nombre', '')} {user_data.get('primerApellido', '')}".strip()
+
+                # Crear UserProfile (requerido por Open edX)
                 if UserProfile is not None:
                     UserProfile.objects.get_or_create(
                         user=user,
-                        defaults={"name": f"{user_data.get('nombre', '')} {user_data.get('primerApellido', '')}".strip()}
+                        defaults={"name": full_name}
                     )
+
+                # Crear Registration y activar (autenticado por LlaveMX = verificado)
                 if Registration is not None:
                     reg, _ = Registration.objects.get_or_create(user=user)
                     reg.activate()
+
+                # Crear usuario en el servicio de comentarios/foros
+                if create_comments_service_user is not None:
+                    try:
+                        create_comments_service_user(user)
+                    except Exception:
+                        logger.warning(f"[LlaveMX Mobile] No se pudo crear usuario en comments service para {user.username}")
+
+                # Preferencia de idioma
+                if preferences_api is not None and LANGUAGE_KEY:
+                    try:
+                        if not preferences_api.has_user_preference(user, LANGUAGE_KEY):
+                            preferences_api.set_user_preference(user, LANGUAGE_KEY, get_language() or "es-419")
+                    except Exception:
+                        logger.warning(f"[LlaveMX Mobile] No se pudo guardar preferencia de idioma para {user.username}")
+
+                # Atributo created_on_site
+                if UserAttribute is not None:
+                    try:
+                        site_name = getattr(request, 'site', None)
+                        if site_name:
+                            UserAttribute.set_user_attribute(user, "created_on_site", site_name.domain)
+                    except Exception:
+                        logger.warning(f"[LlaveMX Mobile] No se pudo guardar created_on_site para {user.username}")
+
                 logger.info(f"[LlaveMX Mobile] Usuario creado: {user.username} ({email})")
             else:
                 # Asegurar que la cuenta esté activa (autenticado por LlaveMX = verificado)
@@ -290,6 +353,34 @@ class LlaveMxMobileLogin(APIView):
                     ei.curp = curp
                     ei.save(update_fields=["curp"])
                     logger.info(f"[LlaveMX Mobile] CURP actualizado en ExtraInfo para user_id={user.id}")
+
+            # 3e) Vincular con social_auth (UserSocialAuth)
+            #     Sin esto, el usuario no queda asociado al provider "llavemx"
+            #     y no podrá hacer login vía LlaveMX en la web.
+            if UserSocialAuth is not None and uid:
+                try:
+                    social_extra_data = {
+                        "access_token": access_token,
+                        "curp": curp,
+                        "telefono": user_data.get("telVigente") or "",
+                        "fechaNacimiento": user_data.get("fechaNacimiento") or "",
+                        "sexo": user_data.get("sexo") or "",
+                        "correoVerificado": bool(user_data.get("correoVerificado", False)),
+                        "telefonoVerificado": bool(user_data.get("telefonoVerificado", False)),
+                        "es_extranjero": bool(user_data.get("esExtranjero", False)),
+                    }
+                    social_auth, sa_created = UserSocialAuth.objects.update_or_create(
+                        user=user,
+                        provider="llavemx",
+                        uid=str(uid),
+                        defaults={"extra_data": json.dumps(social_extra_data)}
+                    )
+                    if sa_created:
+                        logger.info(f"[LlaveMX Mobile] UserSocialAuth creado para user_id={user.id} uid={uid}")
+                    else:
+                        logger.info(f"[LlaveMX Mobile] UserSocialAuth actualizado para user_id={user.id} uid={uid}")
+                except Exception:
+                    logger.exception(f"[LlaveMX Mobile] Error al crear/actualizar UserSocialAuth para user_id={user.id}")
 
             # 4️⃣ Emitir token Open edX
             if create_dot_access_token is None or Application is None:
