@@ -62,12 +62,12 @@ except ImportError:
 
 try:
     from custom_reg_form.models import ExtraInfo
-except ImportError:
+except Exception:
     ExtraInfo = None
 
 try:
     from users.models import LlaveMXBlockedLogin
-except ImportError:
+except Exception:
     LlaveMXBlockedLogin = None
 
 GENERIC_CURP = "XEXX010101HDFXXX04"
