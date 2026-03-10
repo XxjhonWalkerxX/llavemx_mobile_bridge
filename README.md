@@ -1,130 +1,187 @@
 # LlaveMX Mobile Bridge
 
-Plugin de Open edX para autenticación móvil con LlaveMX (compatible con Ulmo).
+Plugin de Open edX (Release Ulmo) que permite autenticar usuarios desde la app móvil Android de MéxicoX usando [Llave MX](https://www.gob.mx/llavemx), la identidad digital del Gobierno de México, mediante el flujo OAuth 2.0 Authorization Code con PKCE.
 
-## Descripción
+## Qué hace
 
-Este plugin permite que aplicaciones móviles autentiquen usuarios usando LlaveMX con el flujo OAuth PKCE. Obtiene los datos del usuario de LlaveMX y emite tokens de acceso válidos para Open edX.
+El plugin actúa como puente entre la app Android y la API de LlaveMX. Expone dos endpoints en el LMS:
 
-## Características
+| Endpoint | Método | Función |
+|----------|--------|---------|
+| `/mobile/callback` | GET | Recibe el redirect de LlaveMX tras la autenticación y redirige a la app Android mediante deep link (`mx.aprende.android://oauth/callback`) |
+| `/api/mobile/llavemx/login/` | POST | Recibe el `code` + `code_verifier` desde la app, hace el intercambio PKCE con LlaveMX, obtiene datos del usuario, crea/actualiza la cuenta en Open edX y emite un JWT válido |
 
-- ✅ Compatible con Open edX Ulmo
-- ✅ Autenticación PKCE segura
-- ✅ Creación automática de usuarios
-- ✅ Emisión de tokens OAuth de Open edX
+## Flujo completo
+
+```
+App Android             Navegador             LlaveMX API            Este plugin             Open edX
+    │                       │                      │                      │                      │
+    │──1. Abre navegador───▶│                      │                      │                      │
+    │   con URL de LlaveMX  │──2. Autenticación───▶│                      │                      │
+    │   + PKCE challenge    │                      │                      │                      │
+    │                       │◀─3. Redirect─────────│                      │                      │
+    │                       │  /mobile/callback     │                      │                      │
+    │                       │  ?code=XXX&state=YYY  │                      │                      │
+    │                       │─────────────────────────────────────────────▶│                      │
+    │                       │                      │            4. Genera HTML con deep link      │
+    │◀──5. Deep link────────│                      │                      │                      │
+    │   mx.aprende.android://oauth/callback?code=XXX&state=YYY            │                      │
+    │                       │                      │                      │                      │
+    │──6. POST /api/mobile/llavemx/login/─────────────────────────────────▶                      │
+    │   { code, code_verifier, redirect_uri }      │                      │                      │
+    │                       │                      │◀─7. obtenerToken─────│  (PKCE exchange)     │
+    │                       │                      │──accessToken────────▶│                      │
+    │                       │                      │◀─8. datosUsuario─────│                      │
+    │                       │                      │──curp,email,nombre──▶│                      │
+    │                       │                      │                      │──9. get_or_create───▶│
+    │                       │                      │                      │   User + Profile     │
+    │                       │                      │                      │──10. DOT → JWT──────▶│
+    │                       │                      │                      │◀─JWT token───────────│
+    │◀──11. { access_token: "eyJ...", token_type: "JWT" }─────────────────│                      │
+    │                       │                      │                      │                      │
+    │──12. Authorization: JWT eyJ... ──────────────────────────────────────────────────────────────▶
+    │   (todas las APIs móviles)                   │                      │                      │
+```
+
+## Estructura del proyecto
+
+```
+llavemx_mobile_bridge/
+├── pyproject.toml          # Empaquetado + entry-point "lms.djangoapp"
+└── llavemx_mobile_bridge/
+    ├── __init__.py
+    ├── apps.py             # AppConfig con plugin_app → inyecta URLs en el LMS
+    ├── urls.py             # 2 rutas: /mobile/callback y /api/mobile/llavemx/login/
+    ├── views.py            # LlaveMxMobileCallback (HTML redirect) y LlaveMxMobileLogin (API)
+    └── services.py         # Lógica de negocio auxiliar para LlaveMX
+```
+
+## Cómo se registra en Open edX
+
+El plugin usa el sistema estándar de plugins de edx-platform:
+
+1. **`pyproject.toml`** declara el entry-point `lms.djangoapp` → Open edX lo descubre al hacer `pip install`
+2. **`apps.py`** define `plugin_app["url_config"]["lms.djangoapp"]` → el LMS inyecta las URLs automáticamente
+3. No se necesita modificar ningún archivo de edx-platform
 
 ## Instalación
 
-### Usando pip
+### En Tutor (producción/staging)
 
 ```bash
-pip install git+https://github.com/tu-usuario/llavemx_mobile_bridge.git
+# Dentro del contenedor LMS
+tutor local exec lms bash -c "pip install git+https://github.com/tu-org/llavemx_mobile_bridge.git"
+tutor local restart lms
 ```
 
-### En Tutor (Open edX)
-
-Agregar al archivo de configuración o en un plugin de Tutor:
+### Desarrollo local con volumen montado
 
 ```bash
-pip install git+https://github.com/tu-usuario/llavemx_mobile_bridge.git
+# Montar el directorio como volumen en Tutor y luego:
+tutor local exec lms bash -c "pip install -e /openedx/extra/llavemx_mobile_bridge/"
+tutor local restart lms
 ```
 
 ## Configuración
 
-### 1. Variables de entorno / Django settings
+### 1. Crear aplicación OAuth en Django Admin
 
-Agregar en la configuración de Open edX:
+Ir a `https://tu-dominio.com/admin/oauth2_provider/application/` y crear:
+
+| Campo | Valor |
+|-------|-------|
+| **Name** | `LlaveMX Mobile` |
+| **Client type** | Public |
+| **Authorization grant type** | Resource owner password-based |
+| **User** | Un usuario administrador existente |
+| **Skip authorization** | ✅ |
+
+> **Importante:** el nombre debe ser exactamente `LlaveMX Mobile` — el plugin busca la aplicación por este nombre.
+
+### 2. Settings de Django (opcionales)
+
+Los valores por defecto apuntan al **sandbox** de LlaveMX. Para producción, configurar en los settings del LMS:
 
 ```python
-LLAVEMX_MOBILE_CLIENT_ID = "tu-client-id-de-llavemx"
+# Client ID de la app registrada en LlaveMX
+LLAVEMX_MOBILE_CLIENT_ID = "202602091646467055"  # sandbox por defecto
 
-# Opcional: URLs personalizadas de LlaveMX
+# URLs de la API de LlaveMX
+# Sandbox (por defecto):
 LLAVEMX_TOKEN_URL = "https://val-api-llave.infotec.mx/ws/rest/apps/oauth/obtenerToken"
 LLAVEMX_USER_INFO_URL = "https://val-api-llave.infotec.mx/ws/rest/apps/oauth/datosUsuario"
+
+# Producción:
+# LLAVEMX_TOKEN_URL = "https://www.api.llave.gob.mx/ws/rest/apps/oauth/obtenerToken"
+# LLAVEMX_USER_INFO_URL = "https://www.api.llave.gob.mx/ws/rest/apps/oauth/datosUsuario"
+
+# Deep link scheme de la app Android (por defecto: mx.aprende.android)
+LLAVEMX_ANDROID_DEEP_LINK_SCHEME = "mx.aprende.android"
 ```
 
-### 2. Crear aplicación OAuth en Open edX
+En Tutor, agregar estas variables via plugin o en `lms.env.json`.
 
-Crear una aplicación OAuth en Django Admin con el nombre **"LlaveMX Mobile"**:
+## Endpoints
 
-1. Ir a `/admin/oauth2_provider/application/`
-2. Crear nueva aplicación:
-   - **Name**: `LlaveMX Mobile`
-   - **Client type**: Confidential
-   - **Authorization grant type**: Client credentials
-   - **Skip authorization**: ✅
+### `GET /mobile/callback`
 
-## Uso
+Recibe el redirect de LlaveMX después de que el usuario se autentica en el navegador.
 
-### Endpoint
+**Query params:**
+- `code` — Código de autorización JWT de LlaveMX
+- `state` — Estado CSRF generado por la app
 
-```
-POST /api/mobile/llavemx/login/
-```
+**Respuesta:** Página HTML que abre automáticamente la app Android via deep link.
 
-### Request Body
+### `POST /api/mobile/llavemx/login/`
+
+Intercambia el código de autorización por un JWT de Open edX.
+
+**Content-Type:** `application/x-www-form-urlencoded` o `application/json`
+
+**Body:**
+
+| Campo | Tipo | Requerido | Descripción |
+|-------|------|-----------|-------------|
+| `code` | string | Sí | Código de autorización recibido de LlaveMX |
+| `code_verifier` | string | Sí | Verificador PKCE generado por la app |
+| `redirect_uri` | string | No | URI de redirección usada (ej: `https://dev.mexicox.gob.mx/mobile/callback`) |
+
+**Respuesta exitosa (200):**
 
 ```json
 {
-  "code": "código-de-autorización-de-llavemx",
-  "code_verifier": "verificador-pkce",
-  "redirect_uri": "tu-app://callback"
+  "access_token": "eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "JWT",
+  "expires_in": 3600,
+  "scope": "profile email",
+  "refresh_token": "opaque-refresh-token"
 }
 ```
 
-### Response (éxito)
+**Errores posibles:**
 
-```json
-{
-  "access_token": "token-de-open-edx",
-  "token_type": "Bearer",
-  "expires_in": 36000,
-  "scope": "profile email"
-}
-```
+| Código | Causa |
+|--------|-------|
+| 400 | Faltan `code` o `code_verifier`, o LlaveMX no devolvió email |
+| 500 | No existe la aplicación OAuth "LlaveMX Mobile" en Django Admin |
+| 501 | Módulo `oauth_dispatch` no disponible |
+| 502 | Error al comunicarse con la API de LlaveMX |
+| 504 | Timeout conectando con LlaveMX |
 
-## Flujo de Autenticación
+## Qué hace con los usuarios
 
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   App Móvil │     │   LlaveMX   │     │  Este Plugin │     │  Open edX   │
-└──────┬──────┘     └──────┬──────┘     └──────┬──────┘     └──────┬──────┘
-       │                   │                   │                   │
-       │  1. Auth PKCE     │                   │                   │
-       │──────────────────>│                   │                   │
-       │                   │                   │                   │
-       │  2. Code + Verifier                   │                   │
-       │<──────────────────│                   │                   │
-       │                   │                   │                   │
-       │  3. POST /api/mobile/llavemx/login/   │                   │
-       │──────────────────────────────────────>│                   │
-       │                   │                   │                   │
-       │                   │  4. Exchange Token│                   │
-       │                   │<──────────────────│                   │
-       │                   │                   │                   │
-       │                   │  5. User Data     │                   │
-       │                   │<──────────────────│                   │
-       │                   │                   │                   │
-       │                   │                   │  6. Create Token  │
-       │                   │                   │──────────────────>│
-       │                   │                   │                   │
-       │  7. Open edX Token                    │                   │
-       │<──────────────────────────────────────│                   │
-       │                   │                   │                   │
-```
+- **Usuario nuevo:** Crea `User` (con CURP como username, `is_active=True`, sin contraseña), `UserProfile` y `Registration`
+- **Usuario existente:** Busca por email. Si tiene `is_active=False`, lo reactiva. Asegura que exista `UserProfile`
+- Genera un username único si el CURP ya está tomado (agrega sufijo `_1`, `_2`, etc.)
 
 ## Desarrollo
 
 ```bash
-# Clonar repositorio
-git clone https://github.com/tu-usuario/llavemx_mobile_bridge.git
+git clone https://github.com/tu-org/llavemx_mobile_bridge.git
 cd llavemx_mobile_bridge
-
-# Crear entorno virtual
 python -m venv venv
 source venv/bin/activate
-
-# Instalar dependencias de desarrollo
 pip install -e ".[dev]"
 ```
 
