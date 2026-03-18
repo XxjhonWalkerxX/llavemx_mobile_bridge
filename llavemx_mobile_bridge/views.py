@@ -303,6 +303,13 @@ class LlaveMxMobileLogin(APIView):
                     reg, _ = Registration.objects.get_or_create(user=user)
                     reg.activate()
 
+                # Garantizar is_active=True a nivel BD, bypasando señales de Django
+                # que podrían resetearlo a False de forma asíncrona (ej. señal de
+                # activation email). Esto es lo que permite el login en web.
+                User.objects.filter(pk=user.pk).update(is_active=True)
+                user.is_active = True
+                logger.info(f"[LlaveMX Mobile] is_active forzado a True (BD) para {user.username}")
+
                 # Crear usuario en el servicio de comentarios/foros
                 if create_comments_service_user is not None:
                     try:
@@ -330,10 +337,10 @@ class LlaveMxMobileLogin(APIView):
                 logger.info(f"[LlaveMX Mobile] Usuario creado: {user.username} ({email})")
             else:
                 # Asegurar que la cuenta esté activa (autenticado por LlaveMX = verificado)
-                if not user.is_active:
-                    user.is_active = True
-                    user.save(update_fields=["is_active"])
-                    logger.info(f"[LlaveMX Mobile] Usuario reactivado: {user.username} ({email})")
+                # Usamos .update() para bypasar señales que puedan resetear is_active
+                User.objects.filter(pk=user.pk).update(is_active=True)
+                user.is_active = True
+                logger.info(f"[LlaveMX Mobile] Usuario activo confirmado (BD): {user.username} ({email})")
                 else:
                     logger.info(f"[LlaveMX Mobile] Usuario existente: {user.username} ({email})")
                 # Asegurar que exista UserProfile
