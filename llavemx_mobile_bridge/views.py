@@ -137,7 +137,7 @@ class LlaveMxMobileLogin(APIView):
             )
 
         try:
-            # 1️⃣ Intercambio PKCE con LlaveMX
+            #  Intercambio PKCE con LlaveMX
             logger.info(f"[LlaveMX Mobile] Exchanging code with LlaveMX at {LLAVEMX_TOKEN_URL}")
             token_response = requests.post(
                 LLAVEMX_TOKEN_URL,
@@ -171,7 +171,7 @@ class LlaveMxMobileLogin(APIView):
                     status=status.HTTP_502_BAD_GATEWAY
                 )
 
-            # 2️⃣ Obtener datos del usuario
+            # Obtener datos del usuario
             logger.info(f"[LlaveMX Mobile] Fetching user data from {LLAVEMX_USER_INFO_URL}")
             user_response = requests.get(
                 LLAVEMX_USER_INFO_URL,
@@ -208,7 +208,7 @@ class LlaveMxMobileLogin(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # 3️⃣ Buscar usuario existente (primero por CURP, luego por email)
+            #  Buscar usuario existente (primero por CURP, luego por email)
             user = None
             created = False
 
@@ -299,9 +299,9 @@ class LlaveMxMobileLogin(APIView):
                         defaults={"name": full_name}
                     )
 
-                # Crear Registration SIN disparar post_save (que lanza tarea Celery
-                # que resetea is_active=False para forzar verificación por email).
-                # bulk_create NO dispara post_save signals → no hay tarea Celery.
+                # Crear Registration como activada sin disparar post_save signals
+                # (bulk_create no dispara señales, evitando tareas Celery que
+                # desactivarían la cuenta para forzar verificación por email).
                 if Registration is not None:
                     updated = Registration.objects.filter(user=user).update(activation_key='ACTIVATED')
                     if updated == 0:
@@ -309,11 +309,6 @@ class LlaveMxMobileLogin(APIView):
                             [Registration(user=user, activation_key='ACTIVATED')],
                             ignore_conflicts=True,
                         )
-
-                # Garantizar is_active=True a nivel BD (usuario verificado por LlaveMX)
-                User.objects.filter(pk=user.pk).update(is_active=True)
-                user.is_active = True
-                logger.info(f"[LlaveMX Mobile] is_active forzado a True (BD) para {user.username}")
 
                 # Crear usuario en el servicio de comentarios/foros
                 if create_comments_service_user is not None:
@@ -341,11 +336,11 @@ class LlaveMxMobileLogin(APIView):
 
                 logger.info(f"[LlaveMX Mobile] Usuario creado: {user.username} ({email})")
             else:
-                # Asegurar que la cuenta esté activa (autenticado por LlaveMX = verificado)
-                # Usamos .update() para bypasar señales que puedan resetear is_active
-                User.objects.filter(pk=user.pk).update(is_active=True)
-                user.is_active = True
-                logger.info(f"[LlaveMX Mobile] Usuario activo confirmado (BD): {user.username} ({email})")
+                # Reactivar si fue desactivada por algún proceso externo
+                if not user.is_active:
+                    User.objects.filter(pk=user.pk).update(is_active=True)
+                    user.is_active = True
+                    logger.info(f"[LlaveMX Mobile] Cuenta reactivada para {user.username}")
                 # Asegurar que exista UserProfile
                 if UserProfile is not None:
                     UserProfile.objects.get_or_create(
@@ -392,7 +387,7 @@ class LlaveMxMobileLogin(APIView):
                 except Exception:
                     logger.exception(f"[LlaveMX Mobile] Error al crear/actualizar UserSocialAuth para user_id={user.id}")
 
-            # 4️⃣ Emitir token Open edX
+            # Emitir token Open edX
             if create_dot_access_token is None or Application is None:
                 logger.error("[LlaveMX Mobile] Open edX OAuth not available")
                 return Response(
