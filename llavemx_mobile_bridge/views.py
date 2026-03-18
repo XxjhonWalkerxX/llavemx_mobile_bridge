@@ -341,8 +341,6 @@ class LlaveMxMobileLogin(APIView):
                 User.objects.filter(pk=user.pk).update(is_active=True)
                 user.is_active = True
                 logger.info(f"[LlaveMX Mobile] Usuario activo confirmado (BD): {user.username} ({email})")
-                else:
-                    logger.info(f"[LlaveMX Mobile] Usuario existente: {user.username} ({email})")
                 # Asegurar que exista UserProfile
                 if UserProfile is not None:
                     UserProfile.objects.get_or_create(
