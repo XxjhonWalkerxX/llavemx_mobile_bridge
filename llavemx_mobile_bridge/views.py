@@ -298,14 +298,18 @@ class LlaveMxMobileLogin(APIView):
                         defaults={"name": full_name}
                     )
 
-                # Crear Registration y activar (autenticado por LlaveMX = verificado)
+                # Crear Registration SIN disparar post_save (que lanza tarea Celery
+                # que resetea is_active=False para forzar verificación por email).
+                # bulk_create NO dispara post_save signals → no hay tarea Celery.
                 if Registration is not None:
-                    reg, _ = Registration.objects.get_or_create(user=user)
-                    reg.activate()
+                    updated = Registration.objects.filter(user=user).update(activation_key='')
+                    if updated == 0:
+                        Registration.objects.bulk_create(
+                            [Registration(user=user, activation_key='')],
+                            ignore_conflicts=True,
+                        )
 
-                # Garantizar is_active=True a nivel BD, bypasando señales de Django
-                # que podrían resetearlo a False de forma asíncrona (ej. señal de
-                # activation email). Esto es lo que permite el login en web.
+                # Garantizar is_active=True a nivel BD (usuario verificado por LlaveMX)
                 User.objects.filter(pk=user.pk).update(is_active=True)
                 user.is_active = True
                 logger.info(f"[LlaveMX Mobile] is_active forzado a True (BD) para {user.username}")
