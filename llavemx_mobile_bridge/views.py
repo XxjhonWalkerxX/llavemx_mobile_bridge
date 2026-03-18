@@ -302,10 +302,10 @@ class LlaveMxMobileLogin(APIView):
                 # que resetea is_active=False para forzar verificación por email).
                 # bulk_create NO dispara post_save signals → no hay tarea Celery.
                 if Registration is not None:
-                    updated = Registration.objects.filter(user=user).update(activation_key='')
+                    updated = Registration.objects.filter(user=user).update(activation_key='ACTIVATED')
                     if updated == 0:
                         Registration.objects.bulk_create(
-                            [Registration(user=user, activation_key='')],
+                            [Registration(user=user, activation_key='ACTIVATED')],
                             ignore_conflicts=True,
                         )
 
