@@ -3,6 +3,7 @@ Views for LlaveMX Mobile Bridge plugin.
 """
 import json
 import logging
+import secrets
 from urllib.parse import urlencode
 
 import requests
@@ -285,7 +286,7 @@ class LlaveMxMobileLogin(APIView):
                     last_name=f"{user_data.get('primerApellido', '')} {user_data.get('segundoApellido', '')}".strip(),
                     is_active=True,
                 )
-                user.set_password(User.objects.make_random_password(length=30))
+                user.set_password(secrets.token_urlsafe(30))
                 user.save()
                 created = True
 
