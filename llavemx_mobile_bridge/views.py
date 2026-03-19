@@ -1,5 +1,50 @@
 """
-Views for LlaveMX Mobile Bridge plugin.
+LlaveMX Mobile Bridge — Backend de autenticación móvil (PKCE).
+Integración oficial con Open edX mediante el flujo OAuth2 PKCE para apps nativas.
+
+Esta implementación sigue el Manual Técnico LlaveMX (Integración Apps Nativas v2.1):
+- OAuth2 Authorization Code CON PKCE (sin client_secret)
+- El intercambio de code por token se hace SOLO desde el backend (servidor)
+- El token de LlaveMX nunca se expone a la app ni al frontend
+
+NOTAS DE SEGURIDAD IMPLEMENTADAS (Manual LlaveMX Apps Nativas v2.1):
+
+1) IPs homologadas en producción (Sección 3.1)
+   - En producción, las IPs públicas del servidor deben entregarse a la ATDT
+     para ser homologadas antes de activar el ambiente productivo de LlaveMX.
+
+2) PKCE: state y code_verifier (Sección 3.2)
+   - El parámetro "state" es un valor único por solicitud para prevenir CSRF.
+   - El "code_verifier" no debe revelarse ni almacenarse permanentemente;
+     se usa una sola vez para el intercambio del code.
+   - code_challenge = Base64UrlEncode(SHA256(ASCII(code_verifier)))
+   - Generados y validados en la app Android (LlaveMxAuthManager / LlaveMxCallbackActivity).
+
+3) Navegador nativo del dispositivo (Sección 3.3)
+   - La autenticación DEBE realizarse en el navegador web nativo del dispositivo,
+     NO en web-views embebidos. Esto lo gestiona la app Android con Chrome Custom Tabs.
+
+4) Validación del state y vigencia del code (Sección 3.4)
+   - El "state" recibido en el callback debe coincidir con el enviado (anti-CSRF).
+     Esta validación la realiza LlaveMxCallbackActivity en la app Android.
+   - El "code" tiene vigencia de 1 minuto; el backend debe intercambiarlo de inmediato.
+
+5) Intercambio de code por token (Sección 3.5)
+   - El "codeVerifier" se envía como parte del body al intercambiar el code por token.
+   - El access_token tiene vigencia de 15 minutos.
+   - En apps nativas NO se entrega "secret_code" (client_secret); se usa PKCE en su lugar.
+
+6) Manejo seguro del token de acceso (Sección 4.1)
+   - El token de LlaveMX NO se expone al frontend ni se retorna a la app.
+   - Este backend lo usa solo internamente para obtener datos del usuario.
+   - Si LlaveMX responde "invalid_token", se deniega el acceso (HTTP 502).
+   - La app gestiona la sesión mediante el JWT emitido por Open edX, no por el token LlaveMX.
+
+7) Cierre de sesión remoto en apps nativas (Sección 5.1)
+   - El endpoint de cierre de sesión para apps nativas es diferente del web:
+     /ws/rest/apps/auth/cerrarSesion (en lugar de /ws/rest/oauth/cerrarSesion)
+   - En producción se presenta HTTP 411 (Length Required) si no se envía body;
+     solución: enviar body "{}" explícitamente (implementado en revoke si aplica).
 """
 import json
 import logging
@@ -137,7 +182,10 @@ class LlaveMxMobileLogin(APIView):
             )
 
         try:
-            #  Intercambio PKCE con LlaveMX
+            # NOTA DE SEGURIDAD (Manual Apps v2.1, Sección 3.5):
+            # El intercambio de code por token se realiza EXCLUSIVAMENTE desde el backend.
+            # Se envía codeVerifier (PKCE) en lugar de client_secret (no aplica en apps nativas).
+            # El code tiene vigencia de 1 minuto (Sección 3.4) — se intercambia de inmediato.
             logger.info(f"[LlaveMX Mobile] Exchanging code with LlaveMX at {LLAVEMX_TOKEN_URL}")
             token_response = requests.post(
                 LLAVEMX_TOKEN_URL,
@@ -171,7 +219,10 @@ class LlaveMxMobileLogin(APIView):
                     status=status.HTTP_502_BAD_GATEWAY
                 )
 
-            # Obtener datos del usuario
+            # NOTA DE SEGURIDAD (Manual Apps v2.1, Sección 4.1):
+            # El access_token de LlaveMX se usa solo en este llamado de backend.
+            # No se retorna a la app ni se expone al frontend.
+            # El token tiene vigencia de 15 minutos (Sección 3.5).
             logger.info(f"[LlaveMX Mobile] Fetching user data from {LLAVEMX_USER_INFO_URL}")
             user_response = requests.get(
                 LLAVEMX_USER_INFO_URL,
@@ -180,6 +231,9 @@ class LlaveMxMobileLogin(APIView):
             )
             
             if not user_response.ok:
+                # NOTA DE SEGURIDAD (Manual Apps v2.1, Sección 4.1):
+                # Si LlaveMX responde con error (incluido invalid_token),
+                # no se concede acceso. La app deberá reiniciar el flujo de autenticación.
                 logger.error(f"[LlaveMX Mobile] User data fetch failed: {user_response.status_code} - {user_response.text}")
                 return Response(
                     {"error": "Failed to fetch user data from LlaveMX"},
