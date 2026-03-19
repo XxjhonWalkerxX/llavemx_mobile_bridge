@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - MéxicoX</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #611232 0%, #8B1538 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 24px;
+            background: #611232;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .logo svg {
+            width: 40px;
+            height: 40px;
+            fill: white;
+        }
+
+        h1 { color: #333; font-size: 24px; margin-bottom: 12px; }
+
+        p { color: #666; font-size: 16px; margin-bottom: 24px; line-height: 1.5; }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #611232;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 24px;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+        }
+
+        .btn {
+            display: inline-block;
+            background: #611232;
+            color: white;
+            padding: 14px 32px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-size: 16px;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+
+        .btn:hover { background: #8B1538; }
+
+        .note { margin-top: 20px; font-size: 14px; color: #999; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <svg viewBox="0 0 24 24">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10
+                         10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5
+                         1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+            </svg>
+        </div>
+
+        <h1>{{ title }}</h1>
+        <p>{{ message }}</p>
+
+        <div class="spinner" id="spinner"></div>
+
+        <a href="{{ deep_link }}" class="btn">{{ button_text }}</a>
+
+        <p class="note">Si la app no se abre automáticamente, presiona el botón.</p>
+    </div>
+
+    <script>
+        window.location.href = "{{ deep_link }}";
+        setTimeout(function () {
+            document.getElementById('spinner').style.display = 'none';
+        }, 2000);
+    </script>
+</body>
+</html>
