@@ -47,13 +47,17 @@ App Android             Navegador             LlaveMX API            Este plugin
 
 ```
 llavemx_mobile_bridge/
-├── pyproject.toml          # Empaquetado + entry-point "lms.djangoapp"
+├── pyproject.toml                  # Empaquetado + entry-point "lms.djangoapp"
 └── llavemx_mobile_bridge/
     ├── __init__.py
-    ├── apps.py             # AppConfig con plugin_app → inyecta URLs en el LMS
-    ├── urls.py             # 2 rutas: /mobile/callback y /api/mobile/llavemx/login/
-    ├── views.py            # LlaveMxMobileCallback (HTML redirect) y LlaveMxMobileLogin (API)
-    └── services.py         # Lógica de negocio auxiliar para LlaveMX
+    ├── apps.py                     # AppConfig con plugin_app → inyecta URLs en el LMS
+    ├── urls.py                     # 2 rutas: /mobile/callback y /api/mobile/llavemx/login/
+    ├── compat.py                   # Imports opcionales de Open edX (None si no están disponibles)
+    ├── views.py                    # Flujo LlaveMX: intercambio PKCE, obtención de datos, emisión JWT
+    ├── user_sync.py                # Lógica Open edX: buscar/crear/actualizar usuario
+    └── templates/
+        └── llavemx_mobile_bridge/
+            └── callback.html       # Página HTML que abre la app Android via deep link
 ```
 
 ## Cómo se registra en Open edX
@@ -77,7 +81,6 @@ tutor local restart lms
 ### Desarrollo local con volumen montado
 
 ```bash
-# Montar el directorio como volumen en Tutor y luego:
 tutor local exec lms bash -c "pip install -e /openedx/extra/llavemx_mobile_bridge/"
 tutor local restart lms
 ```
@@ -98,9 +101,9 @@ Ir a `https://tu-dominio.com/admin/oauth2_provider/application/` y crear:
 
 > **Importante:** el nombre debe ser exactamente `LlaveMX Mobile` — el plugin busca la aplicación por este nombre.
 
-### 2. Settings de Django (opcionales)
+### 2. Settings de Django
 
-Los valores por defecto apuntan al **sandbox** de LlaveMX. Para producción, configurar en los settings del LMS:
+Los valores por defecto apuntan al **sandbox** de LlaveMX. Para producción, configurar en los settings del LMS (via plugin de Tutor o `lms.env.json`):
 
 ```python
 # Client ID de la app registrada en LlaveMX
@@ -118,8 +121,6 @@ LLAVEMX_USER_INFO_URL = "https://val-api-llave.infotec.mx/ws/rest/apps/oauth/dat
 # Deep link scheme de la app Android (por defecto: mx.aprende.android)
 LLAVEMX_ANDROID_DEEP_LINK_SCHEME = "mx.aprende.android"
 ```
-
-En Tutor, agregar estas variables via plugin o en `lms.env.json`.
 
 ## Endpoints
 
@@ -164,6 +165,7 @@ Intercambia el código de autorización por un JWT de Open edX.
 | Código | Causa |
 |--------|-------|
 | 400 | Faltan `code` o `code_verifier`, o LlaveMX no devolvió email |
+| 403 | CURP duplicado con múltiples cuentas activas — contactar soporte |
 | 500 | No existe la aplicación OAuth "LlaveMX Mobile" en Django Admin |
 | 501 | Módulo `oauth_dispatch` no disponible |
 | 502 | Error al comunicarse con la API de LlaveMX |
@@ -171,9 +173,15 @@ Intercambia el código de autorización por un JWT de Open edX.
 
 ## Qué hace con los usuarios
 
-- **Usuario nuevo:** Crea `User` (con CURP como username, `is_active=True`, sin contraseña), `UserProfile` y `Registration`
-- **Usuario existente:** Busca por email. Si tiene `is_active=False`, lo reactiva. Asegura que exista `UserProfile`
-- Genera un username único si el CURP ya está tomado (agrega sufijo `_1`, `_2`, etc.)
+La búsqueda sigue este orden (alineado con el pipeline web):
+
+1. **Por CURP** — busca en `ExtraInfo.curp`. Si hay múltiples cuentas activas con el mismo CURP, bloquea el login (error 403).
+2. **Por email** — fallback si no se encuentra por CURP.
+3. **Creación** — si no existe, crea una cuenta nueva con:
+   - Username: CURP (o sufijo `_1`, `_2`... si ya está tomado)
+   - Contraseña aleatoria (`secrets.token_urlsafe(30)`) — el usuario no puede hacer login con contraseña
+   - `is_active=True` desde el inicio
+   - `Registration` con `activation_key='ACTIVATED'` via `bulk_create` (evita señales Celery que desactivarían la cuenta)
 
 ## Desarrollo
 
