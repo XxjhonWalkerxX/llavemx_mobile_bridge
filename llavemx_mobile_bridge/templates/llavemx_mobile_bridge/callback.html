@@ -95,13 +95,13 @@
 
         <div class="spinner" id="spinner"></div>
 
-        <a href="{{ deep_link }}" class="btn">{{ button_text }}</a>
+        <a href="{{ deep_link|safe }}" class="btn">{{ button_text }}</a>
 
         <p class="note">Si la app no se abre automáticamente, presiona el botón.</p>
     </div>
 
     <script>
-        window.location.href = "{{ deep_link }}";
+        window.location.href = "{{ deep_link|safe }}";
         setTimeout(function () {
             document.getElementById('spinner').style.display = 'none';
         }, 2000);
