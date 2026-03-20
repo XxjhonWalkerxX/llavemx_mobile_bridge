@@ -45,3 +45,6 @@ llavemx_mobile_bridge = "llavemx_mobile_bridge.apps:LlaveMxMobileBridgeConfig"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["llavemx_mobile_bridge*"]
+
+[tool.setuptools.package-data]
+llavemx_mobile_bridge = ["templates/**/*.html"]
