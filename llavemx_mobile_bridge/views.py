@@ -250,27 +250,37 @@ class LlaveMxMobileCallback(View):
         logger.info("[LlaveMX Callback] Received - code: %s, state: %s, error: %s", bool(code), bool(state), error)
 
         if error:
-            params = urlencode({"error": error, "error_description": error_description})
             context = {
                 "title": "Error de autenticación",
                 "message": error_description or error,
                 "button_text": "Volver a la app",
-                "deep_link": f"{ANDROID_DEEP_LINK_SCHEME}://oauth/callback?{params}",
+                "deep_link_scheme": ANDROID_DEEP_LINK_SCHEME,
+                "dl_error": error,
+                "dl_error_description": error_description,
+                "dl_code": "",
+                "dl_state": "",
             }
         elif code:
-            params = urlencode({"code": code, "state": state or ""})
             context = {
                 "title": "Autenticación exitosa",
                 "message": "Redirigiendo a la aplicación...",
                 "button_text": "Abrir app",
-                "deep_link": f"{ANDROID_DEEP_LINK_SCHEME}://oauth/callback?{params}",
+                "deep_link_scheme": ANDROID_DEEP_LINK_SCHEME,
+                "dl_error": "",
+                "dl_error_description": "",
+                "dl_code": code,
+                "dl_state": state or "",
             }
         else:
             context = {
                 "title": "Error",
                 "message": "No se recibió código de autorización",
                 "button_text": "Volver a la app",
-                "deep_link": f"{ANDROID_DEEP_LINK_SCHEME}://oauth/callback?error=no_code",
+                "deep_link_scheme": ANDROID_DEEP_LINK_SCHEME,
+                "dl_error": "no_code",
+                "dl_error_description": "",
+                "dl_code": "",
+                "dl_state": "",
             }
 
         return render(request, "llavemx_mobile_bridge/callback.html", context)

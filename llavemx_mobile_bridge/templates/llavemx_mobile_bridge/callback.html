@@ -95,16 +95,33 @@
 
         <div class="spinner" id="spinner"></div>
 
-        <a href="{{ deep_link|safe }}" class="btn">{{ button_text }}</a>
+        <a id="open-btn" href="#" class="btn">{{ button_text }}</a>
 
         <p class="note">Si la app no se abre automáticamente, presiona el botón.</p>
     </div>
 
     <script>
-        window.location.href = "{{ deep_link|safe }}";
-        setTimeout(function () {
-            document.getElementById('spinner').style.display = 'none';
-        }, 2000);
+        (function () {
+            var scheme = "{{ deep_link_scheme|escapejs }}";
+            var code = "{{ dl_code|escapejs }}";
+            var state = "{{ dl_state|escapejs }}";
+            var error = "{{ dl_error|escapejs }}";
+            var errorDesc = "{{ dl_error_description|escapejs }}";
+
+            var deepLink;
+            if (code) {
+                deepLink = scheme + "://oauth/callback?code=" + encodeURIComponent(code) + "&state=" + encodeURIComponent(state);
+            } else {
+                deepLink = scheme + "://oauth/callback?error=" + encodeURIComponent(error) + "&error_description=" + encodeURIComponent(errorDesc);
+            }
+
+            document.getElementById('open-btn').href = deepLink;
+            window.location.href = deepLink;
+
+            setTimeout(function () {
+                document.getElementById('spinner').style.display = 'none';
+            }, 2000);
+        })();
     </script>
 </body>
 </html>
