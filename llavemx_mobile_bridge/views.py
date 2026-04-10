@@ -66,19 +66,15 @@ from .user_sync import LlaveMXSyncError, get_or_create_openedx_user
 logger = logging.getLogger(__name__)
 
 def _required_setting(name):
+    """Lee un setting de Django en tiempo de petición (no en importación)."""
+    from django.core.exceptions import ImproperlyConfigured
     value = getattr(settings, name, None)
     if not value:
-        from django.core.exceptions import ImproperlyConfigured
         raise ImproperlyConfigured(
             f"[LlaveMX Mobile Bridge] Falta configurar '{name}' en el Tutor plugin. "
             f"Ejecuta: tutor config save --set {name}=<valor>"
         )
     return value
-
-
-LLAVEMX_TOKEN_URL         = _required_setting("LLAVEMX_TOKEN_URL")
-LLAVEMX_USER_INFO_URL     = _required_setting("LLAVEMX_USER_INFO_URL")
-LLAVEMX_MOBILE_CLIENT_ID  = _required_setting("LLAVEMX_MOBILE_CLIENT_ID")
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -151,12 +147,12 @@ class LlaveMxMobileLogin(APIView):
         (Manual LlaveMX Apps Nativas v2.1, Sección 3.5)
         """
         response = requests.post(
-            LLAVEMX_TOKEN_URL,
+            _required_setting("LLAVEMX_TOKEN_URL"),
             json={
                 "grantType": "authorization_code",
                 "code": code,
                 "redirectUri": redirect_uri,
-                "clientId": LLAVEMX_MOBILE_CLIENT_ID,
+                "clientId": _required_setting("LLAVEMX_MOBILE_CLIENT_ID"),
                 "codeVerifier": code_verifier,
             },
             headers={"Content-Type": "application/json"},
@@ -182,7 +178,7 @@ class LlaveMxMobileLogin(APIView):
         (Manual LlaveMX Apps Nativas v2.1, Sección 4.1)
         """
         response = requests.get(
-            LLAVEMX_USER_INFO_URL,
+            _required_setting("LLAVEMX_USER_INFO_URL"),
             headers={"accessToken": access_token},
             timeout=30
         )
@@ -221,8 +217,6 @@ class LlaveMxMobileLogin(APIView):
         )
 
 
-ANDROID_DEEP_LINK_SCHEME = _required_setting("LLAVEMX_ANDROID_DEEP_LINK_SCHEME")
-IOS_DEEP_LINK_SCHEME     = _required_setting("LLAVEMX_IOS_DEEP_LINK_SCHEME")
 
 
 class LlaveMxMobileCallback(View):
@@ -248,7 +242,7 @@ class LlaveMxMobileCallback(View):
                 "title": "Error de autenticación",
                 "message": error_description or error,
                 "button_text": "Volver a la app",
-                "deep_link_scheme": ANDROID_DEEP_LINK_SCHEME,
+                "deep_link_scheme": _required_setting("LLAVEMX_ANDROID_DEEP_LINK_SCHEME"),
                 "dl_error": error,
                 "dl_error_description": error_description,
                 "dl_code": "",
@@ -259,7 +253,7 @@ class LlaveMxMobileCallback(View):
                 "title": "Autenticación exitosa",
                 "message": "Redirigiendo a la aplicación...",
                 "button_text": "Abrir app",
-                "deep_link_scheme": ANDROID_DEEP_LINK_SCHEME,
+                "deep_link_scheme": _required_setting("LLAVEMX_ANDROID_DEEP_LINK_SCHEME"),
                 "dl_error": "",
                 "dl_error_description": "",
                 "dl_code": code,
@@ -270,7 +264,7 @@ class LlaveMxMobileCallback(View):
                 "title": "Error",
                 "message": "No se recibió código de autorización",
                 "button_text": "Volver a la app",
-                "deep_link_scheme": ANDROID_DEEP_LINK_SCHEME,
+                "deep_link_scheme": _required_setting("LLAVEMX_ANDROID_DEEP_LINK_SCHEME"),
                 "dl_error": "no_code",
                 "dl_error_description": "",
                 "dl_code": "",
