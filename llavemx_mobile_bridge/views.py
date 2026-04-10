@@ -65,22 +65,20 @@ from .user_sync import LlaveMXSyncError, get_or_create_openedx_user
 
 logger = logging.getLogger(__name__)
 
-# URLs configurables desde settings (sandbox por defecto)
-LLAVEMX_TOKEN_URL = getattr(
-    settings,
-    "LLAVEMX_TOKEN_URL",
-    "https://val-api-llave.infotec.mx/ws/rest/apps/oauth/obtenerToken"
-)
-LLAVEMX_USER_INFO_URL = getattr(
-    settings,
-    "LLAVEMX_USER_INFO_URL",
-    "https://val-api-llave.infotec.mx/ws/rest/apps/oauth/datosUsuario"
-)
-LLAVEMX_MOBILE_CLIENT_ID = getattr(
-    settings,
-    "LLAVEMX_MOBILE_CLIENT_ID",
-    "202602091646467055"  # Sandbox default
-)
+def _required_setting(name):
+    value = getattr(settings, name, None)
+    if not value:
+        from django.core.exceptions import ImproperlyConfigured
+        raise ImproperlyConfigured(
+            f"[LlaveMX Mobile Bridge] Falta configurar '{name}' en el Tutor plugin. "
+            f"Ejecuta: tutor config save --set {name}=<valor>"
+        )
+    return value
+
+
+LLAVEMX_TOKEN_URL         = _required_setting("LLAVEMX_TOKEN_URL")
+LLAVEMX_USER_INFO_URL     = _required_setting("LLAVEMX_USER_INFO_URL")
+LLAVEMX_MOBILE_CLIENT_ID  = _required_setting("LLAVEMX_MOBILE_CLIENT_ID")
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -223,12 +221,8 @@ class LlaveMxMobileLogin(APIView):
         )
 
 
-# Deep link scheme configurado en la app Android
-ANDROID_DEEP_LINK_SCHEME = getattr(
-    settings,
-    "LLAVEMX_ANDROID_DEEP_LINK_SCHEME",
-    "mx.aprende.android"
-)
+ANDROID_DEEP_LINK_SCHEME = _required_setting("LLAVEMX_ANDROID_DEEP_LINK_SCHEME")
+IOS_DEEP_LINK_SCHEME     = _required_setting("LLAVEMX_IOS_DEEP_LINK_SCHEME")
 
 
 class LlaveMxMobileCallback(View):

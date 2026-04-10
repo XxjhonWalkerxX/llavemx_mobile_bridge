@@ -42,6 +42,9 @@ Repository = "https://github.com/tu-usuario/llavemx_mobile_bridge"
 [project.entry-points."lms.djangoapp"]
 llavemx_mobile_bridge = "llavemx_mobile_bridge.apps:LlaveMxMobileBridgeConfig"
 
+[project.entry-points."tutor.plugin.v1"]
+llavemx_mobile_bridge = "tutor_plugin"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["llavemx_mobile_bridge*"]
